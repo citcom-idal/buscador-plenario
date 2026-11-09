@@ -117,8 +117,8 @@ async def manuales_subir(manual: UploadFile = File(...)):
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_bytes(data)
     try:
-        import fitz
-        npages = len(fitz.open(str(dest)))
+        import pymupdf
+        npages = len(pymupdf.open(str(dest)))
     except Exception:
         dest.unlink(missing_ok=True)
         return JSONResponse({"error": "PDF ilegible"}, status_code=400)
@@ -858,6 +858,9 @@ def _run_generar(job, url, slug, entidad, fecha, titulo, orden=""):
         op.parent.mkdir(parents=True, exist_ok=True)
         op.write_text(orden, encoding="utf-8")
         cmd += ["--orden", str(op)]
+
+    output_lines = []
+
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              encoding="utf-8", errors="replace", cwd=str(_ROOT))
@@ -884,8 +887,11 @@ def _run_generar(job, url, slug, entidad, fecha, titulo, orden=""):
                 except Exception:
                     pass
         else:
-            _JOBS[job].update(error=f"La generación falló (código {p.returncode}). "
-                              "Comprueba el enlace y que yt-dlp/ffmpeg estén disponibles.", done=True)
+            #_JOBS[job].update(error=f"La generación falló (código {p.returncode}). "
+            #                  "Comprueba el enlace y que yt-dlp/ffmpeg estén disponibles.", done=True)
+            # Mostramos las últimas líneas recibidas de la consola para ver la causa REAL
+            detalle_error = "".join(output_lines[-3:]).strip() if output_lines else "Sin salida disponible"
+            _JOBS[job].update(error=f"La generación falló (código {p.returncode}): {detalle_error}", done=True)
     except Exception as e:                                  # noqa: BLE001
         _JOBS[job].update(error=str(e), done=True)
 
@@ -899,7 +905,7 @@ def generar(payload: dict = Body(...)):
     if not url or not entidad:
         return JSONResponse({"error": "Indica el enlace de YouTube y el ayuntamiento."}, status_code=400)
     job = uuid.uuid4().hex[:8]
-    _JOBS[job] = {"stage": "En cola", "step": 0, "video_id": "", "done": False, "error": "",
+    _JOBS[job] = {"stage": "En cola", "step": 0, "video_id": _yt_id(url), "done": False, "error": "",
                   "pct": 0, "eta_min": 0}
     threading.Thread(target=_run_generar, daemon=True, args=(
         job, url, _slug(entidad), entidad, (payload.get("fecha") or "").strip(),
@@ -986,8 +992,8 @@ async def extract_orden(request: Request):
     if not data:
         return JSONResponse({"error": "No se recibió el PDF."}, status_code=400)
     try:
-        import fitz
-        doc = fitz.open(stream=data, filetype="pdf")
+        import pymupdf
+        doc = pymupdf.open(stream=data, filetype="pdf")
         text = "\n".join(p.get_text() for p in doc)
     except Exception as e:                                  # noqa: BLE001
         return JSONResponse({"error": f"No se pudo leer el PDF: {e}"}, status_code=400)
@@ -1050,7 +1056,7 @@ def main() -> None:
     # 0.0.0.0 = accesible desde otros equipos de la MISMA red local (para la presentación: cada
     # uno se conecta a http://<IP-de-este-PC>:8000). El buscador (:8100) sigue en localhost: solo
     # lo llama nuestro server vía proxy, no se expone. OJO: solo en una red de CONFIANZA.
-    uvicorn.run("app.server:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("app.server:app", host="0.0.0.0", port=8002, reload=False)
 
 
 if __name__ == "__main__":

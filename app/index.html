@@ -62,7 +62,12 @@
           </p>
         </div>
       </div>
-      <button id="gen-btn" class="mt-6 px-5 py-2 text-sm font-medium text-white rounded-sm" style="background:var(--ink)">Generar acta</button>
+      <div class="mt-6 flex items-center gap-3">
+        <button id="gen-btn" class="px-5 py-2 text-sm font-medium text-white rounded-sm" style="background:var(--ink)">Generar acta</button>
+        <button id="gen-dl" disabled title="Disponible cuando el acta esté generada"
+                class="px-5 py-2 text-sm font-medium rounded-sm border"
+                style="border-color:var(--ink); color:var(--ink); opacity:.4; cursor:not-allowed">Descargar acta</button>
+      </div>
       <div id="gen-progress" class="mt-8 max-w-xl" style="display:none">
         <div id="gen-steps" class="space-y-2"></div>
         <p id="gen-timer" class="text-[12px] mt-3 tabular-nums" style="color:var(--muted)"></p>
@@ -402,7 +407,10 @@
       sel.querySelectorAll('optgroup').forEach(o=>o.remove());
       const byEnt={};
       for(const p of ps){ const k=p.entidad||'—'; (byEnt[k]=byEnt[k]||[]).push(p); }
-      const ents=Object.keys(byEnt).filter(e=>/ayuntamiento/i.test(e)).sort((a,b)=>a.localeCompare(b));
+      const todas=Object.keys(byEnt); //.filter(e=>/ayuntamiento/i.test(e)).sort((a,b)=>a.localeCompare(b)); // Se muestran todas las entidades en el menu desplegable
+      const ayto=todas.filter(e=>/ayuntamiento/i.test(e)).sort((a,b)=>a.localeCompare(b));
+      const otras=todas.filter(e=>!/ayuntamiento/i.test(e)).sort((a,b)=>a.localeCompare(b));
+      const ents=[...ayto, ...otras];
       for(const ent of ents){
         const og=document.createElement('optgroup'); og.label=ent+'  ('+byEnt[ent].length+')';
         const muni=/ayuntamiento/i.test(ent);          // sin Diario -> el % es cobertura, no parecido
@@ -1124,12 +1132,36 @@
         if(s.eta_min){ totalSec=Math.round(s.eta_min*60*2.6)+60; }   // estimación total (transcripción ≈ 40%)
         if(s.error){ clearInterval(genTimer); clearInterval(genClock); msg.style.color='#b00020'; msg.textContent=s.error; return; }
         if(s.done){ clearInterval(genTimer); clearInterval(genClock);
+          if(s.video_id) setDescarga(s.video_id);
           document.getElementById('gen-timer').textContent='Terminado en '+fmtDur((Date.now()-t0)/1000);
           msg.innerHTML='Acta generada.  '+(s.video_id?'<a href="#" id="gen-go" class="underline underline-offset-2" style="color:var(--accent)">Revisar y etiquetar las voces →</a>':'');
           const go=document.getElementById('gen-go'); if(go&&s.video_id) go.onclick=ev=>{ev.preventDefault(); goToPleno(s.video_id);};
         } else { msg.textContent=(s.stage||'Procesando')+'…'; }
       },2000);
     }
+    // --- botón «Descargar acta»: independiente de la entidad y del desplegable ---
+    let genVid=null, chkTimer=null;
+    const dlBtn=document.getElementById('gen-dl'), genUrlEl=document.getElementById('gen-url');
+    function setDescarga(vid){
+      genVid=vid||null;
+      dlBtn.disabled=!genVid;
+      dlBtn.style.opacity=genVid?'1':'.4';
+      dlBtn.style.cursor=genVid?'pointer':'not-allowed';
+      dlBtn.title=genVid?'Abrir el acta en PDF':'Disponible cuando el acta esté generada';
+    }
+    dlBtn.onclick=()=>{ if(genVid) window.location.href='/api/acta?video='+encodeURIComponent(genVid)+'&fmt=pdf'; };
+    // al cambiar la URL, comprueba (con retardo) si ese pleno ya tiene acta
+    genUrlEl.addEventListener('input',()=>{
+      setDescarga(null); clearTimeout(chkTimer);
+      const u=genUrlEl.value.trim(); if(!/^https?:\/\//i.test(u)) return;
+      chkTimer=setTimeout(async()=>{
+        try{
+          const ck=await (await fetch('/api/check?url='+encodeURIComponent(u))).json();
+          if(genUrlEl.value.trim()===u && ck && ck.exists && ck.video_id) setDescarga(ck.video_id);
+        }catch(e){}
+      },500);
+    });
+
     const genBtn=document.getElementById('gen-btn');
     if(genBtn) genBtn.onclick=async()=>{
       const url=document.getElementById('gen-url').value.trim();
@@ -1148,6 +1180,7 @@
           +'<a class="underline underline-offset-2" target="_blank" href="/sync?video='+ck.video_id+'">visor</a>  ·  '
           +'<a href="#" id="gen-force" class="underline underline-offset-2">generarlo otra vez (sobrescribe)</a>';
         const fb=document.getElementById('gen-force'); if(fb) fb.onclick=ev=>{ev.preventDefault(); doGenerate(url,entidad,fecha,orden,msg);};
+        if(ck.video_id) setDescarga(ck.video_id);
         return;
       }
       doGenerate(url,entidad,fecha,orden,msg);

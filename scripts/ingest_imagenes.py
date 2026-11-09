@@ -2,7 +2,7 @@
 
 Extrae las imágenes de cada PDF (con su página de origen), filtra iconos/logos por tamaño y
 genera una DESCRIPCIÓN textual de cada captura con un modelo de visión (gemini-flash vía
-OpenRouter, céntimos). La descripción se indexa después como texto normal (espacio BGE-M3
+API Google AI Studio, nivel gratuito disponible). La descripción se indexa después como texto normal (espacio BGE-M3
 uniforme) con metadatos {manual, página} -> respuesta citable "manual X, pág. Y".
 
 CACHÉ: cada descripción se guarda en data/sedipualba/descripciones.json bajo el sha1 del
@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -27,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 MANUALES = Path("data/sedipualba/manuales")
 IMGDIR = Path("data/sedipualba/images")
 CACHE = Path("data/sedipualba/descripciones.json")
-MODEL = "google/gemini-3.5-flash"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 MIN_W, MIN_H, MIN_KB = 200, 120, 8          # fuera iconos, logos y viñetas
 
 # La plantilla: pedimos una descripción ORIENTADA A BÚSQUEDA (qué pantalla es, qué se hace en
@@ -52,18 +53,25 @@ def _load_env():
                 os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
-def _describe(png_bytes: bytes, context: str, timeout: int = 90) -> str:
-    key = os.environ.get("OPENROUTER_API_KEY") or os.environ.get("OPENAI_API_KEY")
+def _describe(png_bytes: bytes, context: str, timeout: int = 120) -> str:
+    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
-        raise RuntimeError("Falta OPENROUTER_API_KEY/OPENAI_API_KEY en .env")
+        raise RuntimeError("Falta GEMINI_API_KEY en .env (clave de Google AI Studio)")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     b64 = base64.b64encode(png_bytes).decode()
-    payload = {"model": MODEL, "temperature": 0.2, "messages": [{"role": "user", "content": [
-        {"type": "text", "text": PROMPT.format(context=context[:600])},
-        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}]}]}
+    payload = {
+        "model": model,
+        "temperature": 0.2,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": PROMPT.format(context=context[:600])},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+        ]}],
+    }
     req = urllib.request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
+        GEMINI_URL,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+    )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))["choices"][0]["message"]["content"].strip()
 
@@ -110,8 +118,9 @@ def main() -> None:
                     print(f"  [fallo] {png.name}: {str(e)[:70]}")
                     continue
                 cache[sha] = {"manual": pdf.name, "page": pno, "file": png.name,
-                              "desc": desc, "model": MODEL}
+                              "desc": desc, "model": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")}
                 done += 1
+                time.sleep(1)                  # respeta el rate-limit del nivel gratuito de Google
                 print(f"  [{done}] {pdf.name} pág.{pno} -> {desc[:110]}…")
         doc.close()
     CACHE.write_text(json.dumps(cache, ensure_ascii=False, indent=1), encoding="utf-8")

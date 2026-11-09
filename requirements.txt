@@ -36,11 +36,15 @@ numpy==2.4.6                  # numpy 2; compatible con pyannote 3.3.2 y transfo
 
 # --- Bloque D: interfaz (PENDIENTE) ---
 # NADA de streamlit. UI = FastAPI (backend) + pagina Tailwind (CDN) con reproductor YouTube embebido.
-fastapi
-uvicorn[standard]
+fastapi[standard-no-fastapi-cloud-cli]
+
 
 # --- Utilidades ---
 pyyaml
-python-dotenv
 srt
 tqdm
+matplotlib
+pypdf
+reportlab
+pymupdf
+python-docx
